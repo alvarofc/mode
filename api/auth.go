@@ -116,17 +116,29 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get the host from the request
+	host := r.Host
+	// If you're behind a proxy, you might need to use:
+	// host := r.Header.Get("X-Forwarded-Host")
+
+	isSecure := r.TLS != nil
+	// If you're behind a proxy, you might need to check a header instead:
+	// isSecure := r.Header.Get("X-Forwarded-Proto") == "https"
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "mode_session",
 		Value:    tokenString,
 		Expires:  expirationTime,
 		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   isSecure,             // Only set Secure flag if using HTTPS
+		SameSite: http.SameSiteLaxMode, // Try Lax mode
 		Path:     "/",
+		Domain:   host, // Set the domain explicitly
 	})
 
-	// Optionally, you can also send a success response
+	// Log cookie setting for debugging
+	log.Printf("Setting cookie for domain: %s, secure: %v", host, isSecure)
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Successfully signed in"})
 }
