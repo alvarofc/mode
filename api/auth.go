@@ -1,7 +1,10 @@
 package api
 
 import (
+	"crypto/rsa"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,9 +16,48 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// In functions where you need the JWT secret:
-func getJWTSecret() []byte {
-	return []byte(os.Getenv("JWT_SECRET"))
+// Global variables for RSA keys
+var (
+	signKey   *rsa.PrivateKey
+	verifyKey *rsa.PublicKey
+)
+
+// InitializeKeys loads the RSA keys from environment variables
+func InitializeKeys() error {
+	log.Println("Starting to initialize keys...")
+
+	// Read private key from environment variable
+	privateKeyPEM := os.Getenv("RSA_PRIVATE_KEY")
+	if privateKeyPEM == "" {
+		return fmt.Errorf("RSA_PRIVATE_KEY environment variable is not set")
+	}
+
+	var err error
+	signKey, err = jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
+	if err != nil {
+		return fmt.Errorf("failed to parse private key: %w", err)
+	}
+
+	// Read public key from environment variable
+	publicKeyPEM := os.Getenv("RSA_PUBLIC_KEY")
+	if publicKeyPEM == "" {
+		return fmt.Errorf("RSA_PUBLIC_KEY environment variable is not set")
+	}
+
+	verifyKey, err = jwt.ParseRSAPublicKeyFromPEM([]byte(publicKeyPEM))
+	if err != nil {
+		return fmt.Errorf("failed to parse public key: %w", err)
+	}
+
+	if signKey == nil {
+		return fmt.Errorf("signKey is nil after initialization")
+	}
+	if verifyKey == nil {
+		return fmt.Errorf("verifyKey is nil after initialization")
+	}
+
+	log.Println("Keys initialized successfully")
+	return nil
 }
 
 func (s *Server) handleSignUp(w http.ResponseWriter, r *http.Request) {
@@ -60,20 +102,41 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
+
 	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &jwt.StandardClaims{
 		ExpiresAt: expirationTime.Unix(),
 		Subject:   strconv.Itoa(user.ID),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(getJWTSecret())
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tokenString, err := token.SignedString(signKey)
 	if err != nil {
+		log.Printf("Error signing token: %v", err)
 		http.Error(w, "Error creating token", http.StatusInternalServerError)
 		return
 	}
+
 	http.SetCookie(w, &http.Cookie{
-		Name:    "token",
-		Value:   tokenString,
-		Expires: expirationTime,
+		Name:     "mode_session",
+		Value:    tokenString,
+		Expires:  expirationTime,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Path:     "/",
+	})
+
+	// Optionally, you can also send a success response
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Successfully signed in"})
+}
+
+// VerifyToken verifies the JWT token
+func VerifyToken(tokenString string) (*jwt.Token, error) {
+	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return verifyKey, nil
 	})
 }

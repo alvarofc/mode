@@ -16,6 +16,10 @@ func main() {
 		log.Fatalf("Error loading .env file: %s", err)
 	}
 
+	if err := api.InitializeKeys(); err != nil {
+		log.Fatalf("Failed to initialize keys: %v", err)
+	}
+
 	listenAddr := flag.String("listenaddr", ":8080", "The address to listen on for HTTP requests.")
 	flag.Parse()
 

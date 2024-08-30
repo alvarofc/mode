@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -31,7 +32,7 @@ func (s *Server) loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // authMiddleware checks for a valid JWT token
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie("token")
+		c, err := r.Cookie("mode_session")
 		if err != nil {
 			if err == http.ErrNoCookie {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -40,10 +41,15 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		tokenStr := c.Value
+		tokenString := c.Value
+
 		claims := &jwt.StandardClaims{}
-		token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
-			return getJWTSecret(), nil
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			// Validate the alg is what you expect:
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return verifyKey, nil
 		})
 
 		if err != nil {
@@ -51,7 +57,8 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			log.Printf("Error parsing token: %v", err)
+			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
 

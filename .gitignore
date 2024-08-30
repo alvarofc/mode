@@ -1,3 +1,5 @@
 .env
 tmp/main.exe
 tmp/
+private.pem
+public.pem
