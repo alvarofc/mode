@@ -17,11 +17,13 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/nfnt/resize"
+	"github.com/patrickmn/go-cache"
 )
 
 // S3Client represents a client for interacting with Amazon S3 or compatible storage services
 type S3Client struct {
 	Client *s3.S3
+	Cache  *cache.Cache
 }
 
 // NewS3Client creates and returns a new S3Client instance
@@ -38,7 +40,13 @@ func NewS3Client(key, secret, url, region string) S3Client {
 
 	s3Client := s3.New(sess)
 
-	return S3Client{Client: s3Client}
+	// Create a cache with a default expiration time of 5 minutes and purge unused items every 10 minutes
+	cacheInstance := cache.New(5*time.Minute, 10*time.Minute)
+
+	return S3Client{
+		Client: s3Client,
+		Cache:  cacheInstance,
+	}
 }
 
 // DownloadPhotoByKey retrieves a photo from S3 by its key
@@ -154,6 +162,12 @@ func (s *S3Client) processS3Objects(userID string, limit int64) ([]types.ImageIn
 
 // GetLastXPhotosForUser retrieves the last X photos for a specific user
 func (s *S3Client) GetLastXPhotosForUser(userID string, photoNum int64) ([]types.ImageInfo, error) {
+	cacheKey := fmt.Sprintf("last_%d_photos_%s", photoNum, userID)
+
+	if cachedImages, found := s.Cache.Get(cacheKey); found {
+		return cachedImages.([]types.ImageInfo), nil
+	}
+
 	images, err := s.processS3Objects(userID, photoNum)
 	if err != nil {
 		return nil, err
@@ -192,11 +206,20 @@ func (s *S3Client) GetLastXPhotosForUser(userID string, photoNum int64) ([]types
 		return nil, err
 	}
 
+	// Cache the result
+	s.Cache.Set(cacheKey, images, cache.DefaultExpiration)
+
 	return images, nil
 }
 
 // GetLastPhotoForUser retrieves the most recent photo for a specific user
 func (s *S3Client) GetLastPhotoForUser(userID string) (types.ImageInfo, error) {
+	cacheKey := fmt.Sprintf("last_photo_%s", userID)
+
+	if cachedImage, found := s.Cache.Get(cacheKey); found {
+		return cachedImage.(types.ImageInfo), nil
+	}
+
 	images, err := s.processS3Objects(userID, 1)
 	if err != nil {
 		return types.ImageInfo{}, err
@@ -218,6 +241,9 @@ func (s *S3Client) GetLastPhotoForUser(userID string) (types.ImageInfo, error) {
 		return types.ImageInfo{}, fmt.Errorf("error generating presigned URL: %w", err)
 	}
 	lastImage.URL = urlStr
+
+	// Cache the result
+	s.Cache.Set(cacheKey, lastImage, cache.DefaultExpiration)
 
 	return lastImage, nil
 }
